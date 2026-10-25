@@ -1,0 +1,74 @@
+================================================================================
+ 井场工程日报 / DAILY DRILLING REPORT
+ POC SYNTHETIC DATA — 仅用于 ZIWIGPT 工况预警演示，非真实井史
+================================================================================
+Document No. : DDR-WSC03-20261025-001
+Report Time  : 2026-10-25 06:15 CST
+Data Type    : Synthetic POC / 合成数据
+Encoding     : UTF-8
+
+[WELL]
+Well: West-Sichuan-03
+Field: West Sichuan Gas Field (POC)
+Measured Depth: 4850 m
+Formation: 须家河组砂岩 (Xujiahe Formation sandstone)
+Lithology: 灰色中—细粒砂岩，致密，研磨性中等
+Hole Size: 215.9 mm
+Bit: 215.9 mm PDC，6 刀翼，16 mm 切削齿
+BHA: PDC + 1.5° 螺杆 + MWD + 8 in 钻铤 + 5 in 钻杆
+Mud Type: KCl-聚合物水基钻井液
+Mud Density: 1.42 g/cm3
+Mud Funnel Viscosity: 52 s
+PV: 22 mPa·s
+YP: 12 Pa
+pH: 9.2
+API Filtrate: 3.2 mL
+Pump: 3NB-1300 泥浆泵 × 1，150 mm 缸套
+SPP Continuous Limit: 27.5 MPa
+Data Type: Synthetic POC
+
+[BASELINE]
+Time: 06:00
+Operation: Drilling / 正常钻进
+RPM: 95 rpm
+WOB: 120 kN
+SPP: 19.5 MPa
+ROP: 8.5 m/h
+FLOW: 28 L/s
+TORQUE: 18.2 kN·m
+HOOKLOAD: 1650 kN
+FLOW OUT: 27.8 L/s
+PIT VOLUME: 182.4 m3
+GAS TOTAL: 0.6 %
+MUD TEMP: 68 C
+
+[CURRENT]
+Time: 06:12
+Operation: Drilling / 异常响应
+RPM: 95 rpm
+WOB: 120 kN
+SPP: 26.8 MPa
+ROP: 1.8 m/h
+FLOW: 28 L/s
+TORQUE: 26.4 kN·m
+HOOKLOAD: 1680 kN
+FLOW OUT: 27.1 L/s
+PIT VOLUME: 182.7 m3
+GAS TOTAL: 1.1 %
+MUD TEMP: 69 C
+
+[EVENT LOG]
+06:00:00  正常钻进。SPP 19.5 MPa，ROP 8.5 m/h，扭矩 18.2 kN·m，振动筛返出正常。
+06:08:10  SPP 开始爬升（19.8 → 22.1 MPa），ROP 降至 7.6 m/h；泵冲、转速、钻压未调整。
+06:10:30  SPP 24.9 MPa，ROP 3.4 m/h，扭矩 23.8 kN·m；返出岩屑量减少。
+06:12:00  SPP 26.8 MPa，ROP 1.8 m/h，扭矩 26.4 kN·m；上提摩阻较正常增加约 30 kN。
+06:12:45  司钻停钻，钻头提离井底，泥浆泵继续循环；等待工程指令。
+
+[OBSERVATIONS]
+1. 立管压力在 12 min 内由 19.5 MPa 升至 26.8 MPa，排量、转速、钻压基本保持不变。
+2. 机械钻速由 8.5 m/h 降至 1.8 m/h，扭矩由 18.2 kN·m 升至 26.4 kN·m，呈典型“憋钻/憋泵”响应。
+3. 振动筛返出量明显减少，返出物以细砂为主，偶见片状掉块；未见大量垮塌。
+4. 循环罐总池体积 182.4 → 182.7 m3，基本稳定；未见明确井漏或溢流显示。
+5. 出口流量 27.8 → 27.1 L/s，存在约 0.7 L/s 的表观差值，需排除流量计漂移与环空局部憋堵。
+6. 气测全烃 0.6% → 1.1%，仍处低背景范围，持续监测，暂不构成井控事件。
+7. 当前首要怀疑：环空岩屑床/局部桥堵或钻头泥包、喷嘴堵塞；卡钻前兆风险上升，需立即处置。

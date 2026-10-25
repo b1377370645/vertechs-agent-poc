@@ -1,0 +1,71 @@
+================================================================================
+ 井场工程日报 / DAILY DRILLING REPORT
+ POC SYNTHETIC DATA — 仅用于 ZIWIGPT 工况预警演示，非真实井史
+================================================================================
+Document No. : DDR-TLM01-20261025-001
+Report Time  : 2026-10-25 06:10 CST
+Data Type    : Synthetic POC / 合成数据
+Encoding     : UTF-8
+
+[WELL]
+Well: Tarim-01
+Field: Kuqa Depression (POC)
+Measured Depth: 6200 m
+Formation: 白垩系巴什基奇克组砂岩 (Cretaceous Bashijiqike sandstone)
+Lithology: 褐色中—细粒砂岩，局部含砾，致密
+Hole Size: 215.9 mm
+Bit: 215.9 mm PDC，6 刀翼，16 mm 切削齿
+BHA: PDC + 1.2° 螺杆 + MWD + 8 in 钻铤 + 5 in 钻杆
+Mud Type: 油基钻井液
+Mud Density: 1.58 g/cm3
+Mud Funnel Viscosity: 58 s
+PV: 26 mPa·s
+YP: 14 Pa
+pH: 9.5
+API Filtrate: 2.4 mL
+Pump: 3NB-1600 泥浆泵 × 1，160 mm 缸套
+SPP Continuous Limit: 34.0 MPa
+Data Type: Synthetic POC
+
+[BASELINE]
+Time: 05:30
+Operation: Drilling / 正常钻进
+RPM: 110 rpm
+WOB: 150 kN
+SPP: 31.2 MPa
+ROP: 6.2 m/h
+FLOW: 30 L/s
+TORQUE: 22.5 kN·m
+HOOKLOAD: 1950 kN
+FLOW OUT: 29.8 L/s
+PIT VOLUME: 210.4 m3
+GAS TOTAL: 0.4 %
+MUD TEMP: 82 C
+
+[CURRENT]
+Time: 06:00
+Operation: Drilling / 正常钻进
+RPM: 110 rpm
+WOB: 150 kN
+SPP: 31.6 MPa
+ROP: 6.0 m/h
+FLOW: 30 L/s
+TORQUE: 22.8 kN·m
+HOOKLOAD: 1952 kN
+FLOW OUT: 29.7 L/s
+PIT VOLUME: 210.5 m3
+GAS TOTAL: 0.4 %
+MUD TEMP: 83 C
+
+[EVENT LOG]
+05:30:00  正常钻进。SPP 31.2 MPa，ROP 6.2 m/h，扭矩 22.5 kN·m，返出正常。
+05:45:00  参数平稳，SPP 31.4 MPa，ROP 6.1 m/h，泵冲与转速未调整。
+06:00:00  SPP 31.6 MPa，ROP 6.0 m/h，扭矩 22.8 kN·m；振动筛返出连续、岩屑粒径均匀。
+06:05:00  短程循环观察，泵压与出口流量稳定，无憋堵或井漏显示。
+
+[OBSERVATIONS]
+1. SPP 由 31.2 MPa 微升至 31.6 MPa（+1.28%），低于 25% 告警阈值。
+2. ROP 由 6.2 m/h 微降至 6.0 m/h（-3.23%），低于 50% 预警阈值。
+3. 转速、钻压、排量保持稳定，扭矩与悬重变化在正常波动范围内。
+4. 循环罐总池体积 210.4 → 210.5 m³，出口流量 29.8 → 29.7 L/s，未见井漏/溢流显示。
+5. 综合判断：当前为正常钻进工况，维持参数并继续趋势监测。
