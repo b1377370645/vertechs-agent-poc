@@ -2591,6 +2591,234 @@ div[data-testid="stSpinner"] p {
         white-space: nowrap !important;
     }
 }
+/* =========================================================================
+   OIL-UI V4 — Vertechs Canvas / dynamic industrial micro-interactions
+   ========================================================================= */
+
+/* Deep-sea canvas: #070D18 → #0B132B with a 24px engineering grid */
+.stApp {
+    background-color: #070D18 !important;
+    background-image:
+        linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        radial-gradient(circle at 85% 0%, rgba(245, 158, 11, 0.055), transparent 28rem),
+        radial-gradient(circle at 10% 10%, rgba(16, 185, 129, 0.04), transparent 24rem),
+        linear-gradient(145deg, #070D18 0%, #0A1222 48%, #0B132B 100%) !important;
+    background-size: 24px 24px, 24px 24px, auto, auto, auto !important;
+    background-attachment: fixed !important;
+}
+div[data-testid="stAppViewContainer"],
+div[data-testid="stMain"],
+main,
+.main,
+.block-container {
+    background: transparent !important;
+}
+header[data-testid="stHeader"] {
+    background: transparent !important;
+}
+section[data-testid="stSidebar"] {
+    background-color: #0B132B !important;
+    background-image:
+        linear-gradient(rgba(255, 255, 255, 0.024) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.024) 1px, transparent 1px),
+        linear-gradient(180deg, #0B132B 0%, #081020 100%) !important;
+    background-size: 24px 24px, 24px 24px, auto !important;
+    border-right: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+section[data-testid="stSidebar"] > div,
+section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"],
+section[data-testid="stSidebar"] .block-container {
+    background: transparent !important;
+}
+
+/* Title: never wrap, industrial 26px */
+.console-title-block h1 {
+    font-size: 26px !important;
+    line-height: 1.2 !important;
+    letter-spacing: -0.018em !important;
+    white-space: nowrap !important;
+}
+.console-header {
+    border-color: rgba(245, 158, 11, 0.18) !important;
+    background:
+        radial-gradient(circle at 85% 10%, rgba(245, 158, 11, 0.10), transparent 22rem),
+        linear-gradient(135deg, rgba(7, 13, 24, 0.94) 0%, rgba(11, 19, 43, 0.92) 100%) !important;
+    backdrop-filter: blur(14px);
+}
+.pill {
+    background: rgba(7, 13, 24, 0.58) !important;
+    border-color: rgba(255, 255, 255, 0.12) !important;
+    backdrop-filter: blur(14px);
+}
+
+/* Metrics: DIN-like numerals and amber hover lift */
+.metric-value {
+    font-family: "Bahnschrift", "DIN Alternate", "Segoe UI", "Microsoft YaHei", sans-serif !important;
+    font-weight: 600 !important;
+    letter-spacing: -0.035em !important;
+    font-variant-numeric: tabular-nums;
+}
+.metric-card {
+    transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease !important;
+}
+.metric-card:hover {
+    transform: translateY(-2px) !important;
+    border-color: rgba(245, 158, 11, 0.62) !important;
+    box-shadow:
+        0 0 0 1px rgba(245, 158, 11, 0.12),
+        0 22px 36px -18px rgba(0, 0, 0, 0.9),
+        0 0 26px rgba(245, 158, 11, 0.08) !important;
+}
+.metric-pill {
+    transition: background 0.2s ease, border-color 0.2s ease;
+}
+
+/* Pulse only the primary SPP alert card */
+@keyframes pulse-red {
+    0%, 100% {
+        border-color: rgba(239, 68, 68, 0.30) !important;
+        box-shadow:
+            0 0 0 1px rgba(239, 68, 68, 0.10),
+            0 22px 36px -20px rgba(0, 0, 0, 0.9),
+            0 0 18px rgba(239, 68, 68, 0.035) !important;
+    }
+    50% {
+        border-color: rgba(239, 68, 68, 0.58) !important;
+        box-shadow:
+            0 0 0 1px rgba(239, 68, 68, 0.28),
+            0 22px 36px -20px rgba(0, 0, 0, 0.9),
+            0 0 30px rgba(239, 68, 68, 0.18) !important;
+    }
+}
+.metric-card.pulse-red {
+    animation: pulse-red 3.8s ease-in-out infinite;
+}
+.metric-card.pulse-red:hover {
+    animation: none;
+}
+
+/* Tab selection: amber sliding underline + smooth color transition */
+div[data-testid="stTabs"] [role="tab"] {
+    transition: color 0.22s ease, background 0.22s ease, box-shadow 0.24s ease !important;
+}
+div[data-testid="stTabs"] [role="tab"][aria-selected="true"],
+div[data-testid="stTabs"] button[aria-selected="true"] {
+    border-bottom-color: #F59E0B !important;
+    box-shadow: inset 0 -2px 0 #F59E0B, 0 0 18px rgba(245, 158, 11, 0.08) !important;
+}
+div[data-testid="stTabs"] .react-aria-SelectionIndicator {
+    height: 2px !important;
+    background: #F59E0B !important;
+    box-shadow: 0 0 12px rgba(245, 158, 11, 0.45) !important;
+    transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), width 0.28s cubic-bezier(0.2, 0.8, 0.2, 1) !important;
+}
+div[data-testid="stTabs"] [data-baseweb="tab-highlight"] {
+    display: none !important;
+}
+
+/* PDF export: energy-blue gradient with a controlled sheen */
+div.stDownloadButton > button {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+    transition: transform 0.22s ease, box-shadow 0.22s ease, filter 0.22s ease !important;
+}
+div.stDownloadButton > button > div {
+    position: relative;
+    z-index: 2;
+}
+div.stDownloadButton > button:after {
+    content: "";
+    position: absolute;
+    top: -20%;
+    left: -120%;
+    width: 60%;
+    height: 140%;
+    z-index: 1;
+    pointer-events: none;
+    background: linear-gradient(100deg, transparent 0%, rgba(255, 255, 255, 0.28) 50%, transparent 100%);
+    transform: skewX(-18deg);
+    transition: left 0.65s ease;
+}
+div.stDownloadButton > button:hover {
+    transform: translateY(-1px) !important;
+    filter: brightness(1.08);
+    box-shadow:
+        0 0 28px rgba(56, 189, 248, 0.28),
+        0 16px 30px -16px rgba(2, 132, 199, 0.9) !important;
+}
+div.stDownloadButton > button:hover:after {
+    left: 135%;
+}
+
+/* Respect reduced-motion without removing information */
+@media (prefers-reduced-motion: reduce) {
+    .metric-card.pulse-red {
+        animation: none !important;
+    }
+    div[data-testid="stTabs"] .react-aria-SelectionIndicator,
+    div.stDownloadButton > button:after {
+        transition: none !important;
+    }
+}
+/* Readability floor for supporting copy */
+.side-sub {
+    font-size: 13px !important;
+    line-height: 1.55 !important;
+}
+.side-note {
+    font-size: 13px !important;
+    line-height: 1.65 !important;
+}
+.console-title-block p {
+    font-size: 13px !important;
+}
+/* Final readability pass for dense operating data */
+.risk-detail {
+    font-size: 13px !important;
+    line-height: 1.55 !important;
+}
+.pdf-desc {
+    font-size: 13px !important;
+    line-height: 1.6 !important;
+}
+.rule-row,
+.rule-row b {
+    font-size: 13px !important;
+}
+.risk-pill.danger {
+    color: #FFFFFF !important;
+    background: #B91C1C !important;
+}
+.metric-top {
+    font-size: 0.68rem !important;
+}
+.metric-code {
+    font-size: 0.6rem !important;
+}
+.metric-sub {
+    font-size: 0.73rem !important;
+}
+div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stMarkdownContainer"] p,
+div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stMarkdownContainer"] li,
+div[data-testid="stTabs"] [data-testid="stMarkdownContainer"] p,
+div[data-testid="stTabs"] [data-testid="stMarkdownContainer"] li {
+    max-width: 600px !important;
+    font-size: 0.9rem !important;
+    line-height: 1.75 !important;
+}
+.rule-note {
+    margin-top: 8px;
+    padding: 9px 0 0 0;
+    border: 0 !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    color: #94A3B8 !important;
+    font-size: 13px !important;
+    line-height: 1.55 !important;
+}
 </style>
 """
 
@@ -2620,6 +2848,8 @@ def render_console_header(source_name: str, result: Optional[Dict[str, Any]] = N
         window = "Ready to run"
 
     formation_short = formation.split("(")[0].strip() if "(" in formation else formation
+    if "须家河" in formation_short:
+        formation_short = "须家河组致密砂岩"
 
     st.markdown(
         f"""
@@ -2763,9 +2993,10 @@ def render_risk_banner(result: Dict[str, Any]) -> None:
 
 
 def _metric_card(label: str, code: str, value: str, unit: str,
-                 delta: str, sub: str, tone: str) -> str:
+                 delta: str, sub: str, tone: str, pulse: bool = False) -> str:
+    pulse_class = " pulse-red" if pulse else ""
     return f"""
-    <div class="metric-card {tone}">
+    <div class="metric-card {tone}{pulse_class}">
         <div class="metric-top"><span>{html.escape(label)}</span><span class="metric-code">{html.escape(code)}</span></div>
         <div class="metric-value">{html.escape(value)}<span class="unit">{html.escape(unit)}</span></div>
         <div class="metric-delta"><span class="metric-pill {tone}">{html.escape(delta)}</span></div>
@@ -2793,6 +3024,7 @@ def render_metrics(result: Dict[str, Any]) -> None:
             f"{spp['change_pct']:+.2f}% · {spp['status']}",
             f"基线 {spp['baseline_mpa']:.2f} MPa · 告警线 {spp['threshold_mpa']:.2f} MPa",
             spp_tone,
+            pulse=bool(spp["triggered"]),
         ), unsafe_allow_html=True)
     with cols[1]:
         st.markdown(_metric_card(
@@ -2937,8 +3169,8 @@ def render_ai_tabs(ai_text: str) -> None:
     """Render the two-language diagnosis in a modern tabbed surface."""
     chinese, english = split_ai_sections(ai_text)
     tab_cn, tab_en = st.tabs([
-        "🇨🇳 一线工程归因与 SOP 处置指引",
-        "🌐 Executive Summary (跨国业主会签标准)",
+        "🇨🇳 一线工程归因与 SOP",
+        "🌐 English Executive Summary (海外跨国交付)",
     ])
     with tab_cn:
         if chinese:
@@ -2978,8 +3210,7 @@ def render_ai_panel(result: Dict[str, Any], log_text: str) -> Tuple[str, Dict[st
         header_slot = st.empty()
         header_slot.markdown(_ai_header_html(badge), unsafe_allow_html=True)
         st.markdown(
-            "规则引擎已锁定 SPP / ROP / 水力负荷；DeepSeek 负责解释“为什么”、"
-            "给出“先做什么”，并生成海外业主可直接阅读的英文摘要。"
+            "规则引擎锁定 SPP / ROP / 水力负荷，DeepSeek 只解释因果与处置。"
         )
 
         if not needs_ai:
