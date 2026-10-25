@@ -55,7 +55,7 @@ DEEPSEEK_API_KEY = "sk-..."
 
 ## AI 模型说明
 
-应用首先请求 `deepseek-V4.1-Flash1017`。当前官方 API 返回“模型不存在”，因此自动切换到官方可用的 `deepseek-flash`，并在 UI 和 PDF 中记录实际模型。调用使用标准库 HTTPS，不依赖 OpenAI SDK。
+默认模型为 `deepseek-flash`，每次点击「运行诊断」都会直接请求该模型，不再进行模型级重试或降级切换。侧边栏状态卡片直接显示 `Model: deepseek-flash`，UI 与 PDF 均记录该模型。调用使用标准库 HTTPS，不依赖 OpenAI SDK。
 
 为确保 10 秒级演示响应，请求中设置：
 
@@ -63,7 +63,7 @@ DEEPSEEK_API_KEY = "sk-..."
 {"thinking": {"type": "disabled"}}
 ```
 
-如果网络超时、Key 缺失、模型不可用或返回空正文，应用会自动使用内置高保真专家稿，演示不会崩溃。
+如果网络超时、Key 缺失、请求失败或返回空正文，应用会自动使用内置高保真专家稿，演示不会崩溃；这不属于模型降级，而是离线安全兜底。
 
 ## 安全边界
 

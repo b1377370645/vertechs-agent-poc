@@ -11,10 +11,8 @@ Architecture
 1. Deterministic rules: imports ``loadddr`` and ``analyzedata`` from the
    existing ``check_hydraulics.py``. The LLM never recalculates these values.
 2. Real AI: calls the DeepSeek official chat-completions API over HTTPS using
-   only the Python standard library. The requested model is
-   ``deepseek-V4.1-Flash1017``. Because the official API currently advertises
-   ``deepseek-flash`` / ``deepseek-v4-pro``, the app transparently retries with
-   ``deepseek-flash`` and records the actual model in the UI and PDF.
+   only the Python standard library. The default model is ``deepseek-flash``;
+   there is no model-level retry or downgrade path.
 3. Offline resilience: if the key is missing, the network fails, or the model
    returns no content, a high-fidelity internal expert report is used. The app
    never crashes because of the AI dependency.
@@ -72,22 +70,25 @@ from check_hydraulics import InputError, analyzedata, loadddr
 
 APP_DIR = Path(__file__).resolve().parent
 
-CASES: Dict[str, Dict[str, str]] = {
+CASES: Dict[str, Dict[str, Any]] = {
     "川西-03井｜高危异常": {
         "file": "sample_ddr.txt",
         "well": "West-Sichuan-03",
+        "depth": 4850,
+        "formation": "须家河组砂岩",
         "tag": "HIGH-RISK CASE",
     },
     "塔里木-01井｜正常工况": {
         "file": "sample_tarim_01.txt",
         "well": "Tarim-01",
+        "depth": 6200,
+        "formation": "白垩系巴什基奇克组砂岩",
         "tag": "NORMAL CASE",
     },
 }
 
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
-DEEPSEEK_REQUESTED_MODEL = "deepseek-V4.1-Flash1017"
-DEEPSEEK_FALLBACK_MODEL = "deepseek-flash"
+DEEPSEEK_MODEL = "deepseek-flash"
 AI_CONNECT_TIMEOUT = 60
 AI_MAX_SECONDS = 150
 AI_MAX_TOKENS = 5000
@@ -194,7 +195,6 @@ def init_state() -> None:
         "ai_text": "",
         "ai_meta": {},
         "needs_ai": False,
-        "model_fallback": False,
         "pdf_bytes": None,
         "pdf_name": "",
         "pdf_signature": "",
@@ -222,11 +222,9 @@ def reset_result_state() -> None:
 class DeepSeekError(RuntimeError):
     """A safe, user-facing DeepSeek error."""
 
-    def __init__(self, message: str, *, status: Optional[int] = None,
-                 model_error: bool = False) -> None:
+    def __init__(self, message: str, *, status: Optional[int] = None) -> None:
         super().__init__(message)
         self.status = status
-        self.model_error = model_error
 
 
 def _read_http_error(exc: urllib.error.HTTPError) -> str:
@@ -237,15 +235,6 @@ def _read_http_error(exc: urllib.error.HTTPError) -> str:
     except Exception:
         message = str(exc.reason)
     return re.sub(r"\s+", " ", str(message)).strip()[:400]
-
-
-def _is_model_error(status: int, message: str) -> bool:
-    low = message.lower()
-    return status in (400, 404) and "model" in low and any(
-        token in low
-        for token in ("supported api model names", "not exist", "invalid model",
-                      "does not exist", "unsupported", "not found")
-    )
 
 
 def build_ai_messages(log_text: str, result: Dict[str, Any]) -> List[Dict[str, str]]:
@@ -337,7 +326,6 @@ def _iter_model_stream(
         raise DeepSeekError(
             f"DeepSeek HTTP {exc.code}: {detail}",
             status=exc.code,
-            model_error=_is_model_error(exc.code, detail),
         ) from exc
     except (urllib.error.URLError, TimeoutError, OSError) as exc:
         raise DeepSeekError(f"无法连接 DeepSeek：{type(exc).__name__}") from exc
@@ -389,56 +377,10 @@ def iter_deepseek(
     log_text: str,
     result: Dict[str, Any],
     api_key: str,
-    *,
-    prefer_fallback: bool = False,
 ) -> Generator[Dict[str, Any], None, None]:
-    """
-    Stream DeepSeek content with transparent model fallback.
-
-    The requested model is tried first. If the API rejects it as an unknown
-    model, the supported Flash model is tried. Content errors are not retried
-    with a second model to avoid duplicate/partial reports.
-    """
+    """Stream a single direct DeepSeek request using the default model."""
     messages = build_ai_messages(log_text, result)
-    models: List[str] = []
-    if not prefer_fallback:
-        models.append(DEEPSEEK_REQUESTED_MODEL)
-    if DEEPSEEK_FALLBACK_MODEL not in models:
-        models.append(DEEPSEEK_FALLBACK_MODEL)
-
-    last_error: Optional[Exception] = None
-    for index, model in enumerate(models):
-        produced_content = False
-        try:
-            for event in _iter_model_stream(model, messages, api_key):
-                if event["type"] == "content":
-                    produced_content = True
-                yield event
-            return
-        except DeepSeekError as exc:
-            last_error = exc
-            if (
-                index == 0
-                and not produced_content
-                and exc.model_error
-                and model != DEEPSEEK_FALLBACK_MODEL
-            ):
-                yield {
-                    "type": "notice",
-                    "message": (
-                        f"指定模型 {DEEPSEEK_REQUESTED_MODEL} 未被官方 API 支持，"
-                        f"已自动切换至 {DEEPSEEK_FALLBACK_MODEL}。"
-                    ),
-                }
-                continue
-            raise
-        except Exception as exc:
-            last_error = exc
-            raise
-
-    if last_error:
-        raise last_error
-    raise DeepSeekError("DeepSeek 没有可用模型")
+    yield from _iter_model_stream(DEEPSEEK_MODEL, messages, api_key)
 
 
 # =============================================================================
@@ -898,7 +840,7 @@ def build_pdf(result: Dict[str, Any], ai_text: str, meta: Dict[str, Any],
     ai_label = (
         f"DeepSeek live · {actual_model}"
         if mode == "live"
-        else "Offline expert fallback"
+        else "Offline expert report"
     )
     generated = datetime.now(CN_TZ).strftime("%Y-%m-%d %H:%M CST")
 
@@ -1154,574 +1096,947 @@ def ensure_pdf(result: Dict[str, Any], ai_text: str,
 CSS = """
 <style>
 :root {
-    --navy: #102A43;
-    --ink: #1B2A3A;
-    --muted: #667085;
-    --paper: #F3F0E8;
-    --card: #FFFFFF;
-    --line: #E3DDD0;
-    --red: #B42318;
-    --red-soft: #FEF3F2;
-    --orange: #C2410C;
-    --orange-soft: #FFF7ED;
-    --green: #067647;
-    --green-soft: #ECFDF3;
-    --teal: #0E7C7B;
-    --teal-soft: #E6F4F1;
-    --shadow: 0 18px 45px rgba(16, 42, 67, 0.07);
+    --bg: #F8FAFC;
+    --surface: #FFFFFF;
+    --navy: #0F172A;
+    --navy-2: #111C31;
+    --ink: #1E293B;
+    --muted: #64748B;
+    --line: #E2E8F0;
+    --line-soft: #F1F5F9;
+    --emerald: #10B981;
+    --emerald-deep: #059669;
+    --emerald-soft: #ECFDF5;
+    --red: #EF4444;
+    --red-deep: #DC2626;
+    --red-soft: #FEF2F2;
+    --amber: #F59E0B;
+    --amber-soft: #FFFBEB;
+    --blue: #0284C7;
+    --blue-deep: #0369A1;
+    --shadow-card: 0 10px 15px -3px rgba(0, 0, 0, 0.04);
+    --shadow-hover: 0 18px 30px -12px rgba(15, 23, 42, 0.14);
 }
 html, body, [class*="css"] {
-    font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+    font-family: "Inter", "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
 }
 .stApp {
     background:
-        radial-gradient(circle at 8% 4%, rgba(14, 124, 123, 0.10), transparent 28rem),
-        radial-gradient(circle at 96% 0%, rgba(194, 65, 12, 0.07), transparent 24rem),
-        var(--paper);
+        radial-gradient(circle at 92% 4%, rgba(16, 185, 129, 0.055), transparent 24rem),
+        #F8FAFC;
     color: var(--ink);
 }
 .block-container {
-    max-width: 1480px;
-    padding-top: 1.1rem;
-    padding-bottom: 3rem;
+    max-width: 1500px;
+    padding-top: 1rem;
+    padding-bottom: 3.5rem;
 }
-#MainMenu, footer { visibility: hidden; }
-header[data-testid="stHeader"] { background: transparent; }
-div[data-testid="stToolbar"] { right: 1rem; }
+#MainMenu, footer {
+    visibility: hidden;
+    height: 0;
+}
+header[data-testid="stHeader"] {
+    background: transparent;
+}
+div[data-testid="stToolbar"] {
+    visibility: hidden;
+    height: 0;
+}
+div[data-testid="stDecoration"] {
+    display: none;
+}
 
-/* Top brand bar */
-.topbar {
+/* -------------------------------------------------------------------------
+   Command header — deep navy control room
+   ------------------------------------------------------------------------- */
+.console-header {
+    position: relative;
+    overflow: hidden;
+    margin-bottom: 18px;
+    padding: 22px 26px 21px 26px;
+    border: 1px solid #1E293B;
+    border-radius: 18px;
+    background:
+        radial-gradient(circle at 88% 12%, rgba(16, 185, 129, 0.15), transparent 20rem),
+        linear-gradient(135deg, #0F172A 0%, #111C31 56%, #0B1220 100%);
+    box-shadow: 0 20px 35px -18px rgba(15, 23, 42, 0.45);
+    color: #F8FAFC;
+}
+.console-header:before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background-image:
+        linear-gradient(rgba(148, 163, 184, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 163, 184, 0.045) 1px, transparent 1px);
+    background-size: 42px 42px;
+    mask-image: linear-gradient(90deg, #000 0%, transparent 82%);
+    pointer-events: none;
+}
+.console-header:after {
+    content: "";
+    position: absolute;
+    left: 26px;
+    right: 26px;
+    bottom: 0;
+    height: 2px;
+    background: linear-gradient(90deg, var(--emerald), rgba(16, 185, 129, 0), rgba(16, 185, 129, 0.25));
+    opacity: 0.9;
+}
+.console-top {
+    position: relative;
+    z-index: 1;
     display: flex;
     align-items: center;
     justify-content: space-between;
-    gap: 16px;
-    padding: 4px 2px 14px 2px;
+    gap: 18px;
+    margin-bottom: 20px;
 }
-.brand {
-    font-weight: 800;
-    letter-spacing: 0.14em;
-    font-size: 0.78rem;
-    color: var(--navy);
-}
-.brand span { color: var(--teal); }
-.topbar-right {
-    color: var(--muted);
+.console-brand {
     font-size: 0.72rem;
-    letter-spacing: 0.12em;
+    font-weight: 800;
+    letter-spacing: 0.18em;
+    color: #E2E8F0;
+}
+.console-brand span {
+    color: var(--emerald);
+}
+.console-brand .slash {
+    color: #475569;
+    font-weight: 500;
+    margin: 0 4px;
+}
+.console-secure {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    color: #94A3B8;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.11em;
     text-transform: uppercase;
 }
-
-/* Hero */
-.hero {
-    position: relative;
-    overflow: hidden;
-    border: 1px solid rgba(16, 42, 67, 0.10);
-    border-radius: 24px;
-    padding: 28px 32px 26px 32px;
-    background:
-        linear-gradient(118deg, rgba(255,255,255,0.96) 0%, rgba(255,255,255,0.88) 56%, rgba(230,244,241,0.92) 100%);
-    box-shadow: var(--shadow);
-    margin-bottom: 18px;
-}
-.hero:after {
-    content: "";
-    position: absolute;
-    right: -40px;
-    top: -70px;
-    width: 310px;
-    height: 310px;
+.console-secure .dot {
+    width: 6px;
+    height: 6px;
     border-radius: 50%;
-    border: 38px solid rgba(14, 124, 123, 0.09);
+    background: var(--emerald);
+    box-shadow: 0 0 10px rgba(16, 185, 129, 0.75);
 }
-.eyebrow {
-    color: var(--teal);
-    font-size: 0.72rem;
+.console-main {
+    position: relative;
+    z-index: 1;
+    display: grid;
+    grid-template-columns: minmax(300px, 0.92fr) minmax(560px, 1.45fr);
+    gap: 28px;
+    align-items: end;
+}
+.console-eyebrow {
+    color: #34D399;
+    font-size: 0.62rem;
     font-weight: 800;
     letter-spacing: 0.16em;
     text-transform: uppercase;
-    margin-bottom: 8px;
+    margin-bottom: 7px;
 }
-.hero h1 {
-    color: var(--navy);
-    font-size: clamp(2rem, 4.2vw, 3.2rem);
-    line-height: 1.05;
-    letter-spacing: -0.035em;
-    margin: 0 0 10px 0;
+.console-title-block h1 {
+    margin: 0 0 7px 0;
+    color: #FFFFFF;
+    font-size: clamp(1.85rem, 3vw, 2.55rem);
+    line-height: 1.06;
     font-weight: 800;
+    letter-spacing: -0.045em;
 }
-.hero p {
-    color: #52606D;
-    max-width: 780px;
-    font-size: 1rem;
-    line-height: 1.7;
-    margin: 0 0 16px 0;
+.console-title-block p {
+    margin: 0;
+    color: #CBD5E1;
+    font-size: 0.8rem;
+    line-height: 1.55;
 }
-.chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 7px 11px;
-    border-radius: 999px;
-    border: 1px solid rgba(16, 42, 67, 0.10);
-    background: rgba(255,255,255,0.72);
-    color: #334E68;
-    font-size: 0.71rem;
-    font-weight: 700;
-    letter-spacing: 0.03em;
-}
-.chip.live { color: var(--green); background: var(--green-soft); border-color: #ABEFC6; }
-.chip.warn { color: var(--orange); background: var(--orange-soft); border-color: #FED7AA; }
-
-/* Well strip */
-.well-strip {
+.console-pills {
     display: flex;
     flex-wrap: wrap;
-    align-items: stretch;
-    gap: 0;
-    background: var(--navy);
-    color: white;
-    border-radius: 18px;
-    padding: 16px 20px;
-    margin: 0 0 14px 0;
-    box-shadow: 0 12px 30px rgba(16, 42, 67, 0.14);
+    justify-content: flex-end;
+    gap: 7px;
 }
-.well-block {
-    padding: 0 20px;
-    border-right: 1px solid rgba(255,255,255,0.16);
-    min-width: 128px;
+.pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    max-width: 260px;
+    padding: 8px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.11);
+    border-radius: 9px;
+    background: rgba(255, 255, 255, 0.055);
+    box-shadow:
+        inset 0 1px 0 rgba(255, 255, 255, 0.045),
+        0 0 18px rgba(16, 185, 129, 0.035);
+    backdrop-filter: blur(6px);
 }
-.well-block:first-child { padding-left: 0; }
-.well-block:last-child { border-right: 0; }
-.well-label {
-    font-size: 0.62rem;
-    color: #9FB3C8;
+.pill span {
+    color: #64748B;
+    font-size: 0.56rem;
+    font-weight: 800;
+    letter-spacing: 0.11em;
     text-transform: uppercase;
-    letter-spacing: 0.14em;
-    margin-bottom: 4px;
 }
-.well-value { font-size: 0.94rem; font-weight: 700; color: #F0F4F8; }
+.pill b {
+    overflow: hidden;
+    color: #F8FAFC;
+    font-size: 0.72rem;
+    font-weight: 650;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.pill.accent {
+    border-color: rgba(16, 185, 129, 0.25);
+    background: rgba(16, 185, 129, 0.08);
+}
+.pill.accent b {
+    color: #A7F3D0;
+}
 
-/* Risk banner */
+/* -------------------------------------------------------------------------
+   Risk banner
+   ------------------------------------------------------------------------- */
 .risk-banner {
     display: flex;
-    justify-content: space-between;
-    gap: 18px;
     align-items: center;
-    border-radius: 18px;
-    padding: 17px 21px;
-    margin: 0 0 16px 0;
-    border: 1px solid;
+    justify-content: space-between;
+    gap: 20px;
+    margin-bottom: 16px;
+    padding: 15px 18px;
+    border: 1px solid var(--line);
+    border-left: 4px solid var(--emerald);
+    border-radius: 13px;
+    background: var(--surface);
+    box-shadow: var(--shadow-card);
 }
-.risk-banner.danger { background: var(--red-soft); border-color: #FDA29B; }
-.risk-banner.success { background: var(--green-soft); border-color: #A6F4C5; }
+.risk-banner.danger {
+    border-left-color: var(--red);
+}
+.risk-banner.success {
+    border-left-color: var(--emerald);
+}
 .risk-kicker {
-    font-size: 0.65rem;
-    font-weight: 800;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--muted);
     margin-bottom: 2px;
+    color: var(--muted);
+    font-size: 0.58rem;
+    font-weight: 800;
+    letter-spacing: 0.13em;
+    text-transform: uppercase;
 }
-.risk-title { font-size: 1.25rem; font-weight: 800; color: var(--navy); }
-.risk-banner.danger .risk-title { color: var(--red); }
-.risk-banner.success .risk-title { color: var(--green); }
-.risk-detail { color: #475467; font-size: 0.84rem; line-height: 1.55; text-align: right; }
+.risk-title {
+    color: var(--navy);
+    font-size: 1.18rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+}
+.risk-banner.danger .risk-title {
+    color: var(--red-deep);
+}
+.risk-banner.success .risk-title {
+    color: var(--emerald-deep);
+}
+.risk-detail {
+    color: var(--muted);
+    font-size: 0.72rem;
+    line-height: 1.55;
+    text-align: right;
+}
 .risk-pill {
-    display: inline-block;
-    padding: 5px 9px;
-    border-radius: 8px;
-    color: white;
-    font-size: 0.68rem;
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 8px;
+    border-radius: 6px;
+    color: #FFFFFF;
+    font-size: 0.57rem;
     font-weight: 800;
     letter-spacing: 0.08em;
 }
-.risk-pill.danger { background: var(--red); }
-.risk-pill.success { background: var(--green); }
-
-/* Metric cards */
-.metric-card {
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 18px;
-    padding: 16px 17px 15px 17px;
-    min-height: 150px;
-    box-shadow: 0 10px 24px rgba(16, 42, 67, 0.05);
-    border-top: 4px solid var(--teal);
+.risk-pill.danger {
+    background: var(--red);
 }
-.metric-card.danger { border-top-color: var(--red); }
-.metric-card.warn { border-top-color: var(--orange); }
-.metric-card.success { border-top-color: var(--green); }
+.risk-pill.success {
+    background: var(--emerald);
+}
+
+/* -------------------------------------------------------------------------
+   Metrics grid
+   ------------------------------------------------------------------------- */
+.metric-card {
+    position: relative;
+    min-height: 158px;
+    padding: 17px 18px 15px 18px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface);
+    box-shadow: var(--shadow-card);
+    transition: all 0.2s ease;
+    overflow: hidden;
+}
+.metric-card:hover {
+    transform: translateY(-3px);
+    box-shadow: var(--shadow-hover);
+}
+.metric-card:after {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 18px;
+    width: 34px;
+    height: 2px;
+    background: var(--line);
+}
+.metric-card.danger:after { background: var(--red); }
+.metric-card.warn:after { background: var(--amber); }
+.metric-card.success:after { background: var(--emerald); }
 .metric-top {
     display: flex;
+    align-items: center;
     justify-content: space-between;
     gap: 8px;
     color: var(--muted);
-    font-size: 0.70rem;
+    font-size: 0.61rem;
+    font-weight: 800;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+}
+.metric-code {
+    color: #94A3B8;
+    font-size: 0.54rem;
+    font-weight: 700;
+}
+.metric-value {
+    margin: 18px 0 9px 0;
+    color: var(--navy);
+    font-size: 2.3rem;
+    font-weight: 800;
+    letter-spacing: -0.055em;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+}
+.metric-card.danger .metric-value { color: var(--red); }
+.metric-card.warn .metric-value { color: var(--amber); }
+.metric-card.success .metric-value { color: var(--emerald-deep); }
+.metric-value .unit {
+    margin-left: 5px;
+    color: var(--muted);
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+}
+.metric-delta {
+    display: flex;
+    align-items: center;
+    min-height: 22px;
+    margin-bottom: 6px;
+}
+.metric-pill {
+    display: inline-flex;
+    align-items: center;
+    max-width: 100%;
+    padding: 4px 7px;
+    border-radius: 6px;
+    font-size: 0.64rem;
+    font-weight: 800;
+    line-height: 1.3;
+    letter-spacing: 0.01em;
+}
+.metric-pill.danger {
+    color: #B91C1C;
+    background: var(--red-soft);
+}
+.metric-pill.warn {
+    color: #B45309;
+    background: var(--amber-soft);
+}
+.metric-pill.success {
+    color: #047857;
+    background: var(--emerald-soft);
+}
+.metric-sub {
+    color: #94A3B8;
+    font-size: 0.63rem;
+    line-height: 1.45;
+}
+
+/* -------------------------------------------------------------------------
+   Section labels / AI panel / tabs
+   ------------------------------------------------------------------------- */
+.section-kicker {
+    margin: 15px 0 3px 0;
+    color: var(--emerald-deep);
+    font-size: 0.58rem;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+}
+.section-title {
+    margin: 0 0 10px 0;
+    color: var(--navy);
+    font-size: 1.16rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+}
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface);
+    box-shadow: var(--shadow-card);
+}
+.ai-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 7px;
+}
+.ai-title {
+    color: var(--navy);
+    font-size: 1.24rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+}
+.ai-title .spark {
+    color: var(--emerald);
+    margin-right: 2px;
+}
+.ai-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    font-size: 0.56rem;
     font-weight: 800;
     letter-spacing: 0.07em;
     text-transform: uppercase;
 }
-.metric-code { color: #98A2B3; font-size: 0.62rem; }
-.metric-value {
-    color: var(--navy);
-    font-size: 2.05rem;
-    line-height: 1.0;
-    font-weight: 800;
-    letter-spacing: -0.04em;
-    margin: 17px 0 8px 0;
+.ai-badge.live {
+    color: #047857;
+    border: 1px solid #A7F3D0;
+    background: var(--emerald-soft);
 }
-.metric-card.danger .metric-value { color: var(--red); }
-.metric-card.warn .metric-value { color: var(--orange); }
-.metric-card.success .metric-value { color: var(--green); }
-.metric-value .unit {
-    font-size: 0.72rem;
+.ai-badge.fallback {
+    color: #B45309;
+    border: 1px solid #FDE68A;
+    background: var(--amber-soft);
+}
+.ai-badge.running {
+    color: #0369A1;
+    border: 1px solid #BAE6FD;
+    background: #F0F9FF;
+}
+.ai-badge.ready {
     color: var(--muted);
-    font-weight: 700;
-    margin-left: 5px;
-    letter-spacing: 0.02em;
+    border: 1px solid var(--line);
+    background: #F8FAFC;
 }
-.metric-delta { font-size: 0.88rem; font-weight: 800; color: var(--navy); }
-.metric-sub { color: var(--muted); font-size: 0.71rem; margin-top: 5px; line-height: 1.4; }
-
-/* Section labels */
-.section-kicker {
-    color: var(--teal);
-    font-size: 0.66rem;
-    font-weight: 800;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    margin: 16px 0 4px 0;
-}
-.section-title {
-    color: var(--navy);
-    font-size: 1.18rem;
-    font-weight: 800;
-    margin: 0 0 10px 0;
-}
-
-/* AI panel */
-div[data-testid="stVerticalBlockBorderWrapper"] {
-    background: rgba(255, 255, 255, 0.86);
-    border-radius: 18px;
-    border-color: var(--line);
-    box-shadow: 0 10px 28px rgba(16, 42, 67, 0.045);
-}
-.ai-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    flex-wrap: wrap;
-    margin-bottom: 6px;
-}
-.ai-title { color: var(--navy); font-size: 1.38rem; font-weight: 800; }
-.ai-title .spark { color: var(--teal); }
-.ai-badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 5px 9px;
-    border-radius: 999px;
-    font-size: 0.66rem;
-    font-weight: 800;
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
-}
-.ai-badge.live { color: var(--green); background: var(--green-soft); border: 1px solid #ABEFC6; }
-.ai-badge.fallback { color: var(--orange); background: var(--orange-soft); border: 1px solid #FED7AA; }
-.ai-badge.running { color: #0B5252; background: var(--teal-soft); border: 1px solid #99E3DD; }
-.ai-badge.ready { color: var(--muted); background: #F2F4F7; border: 1px solid #E4E7EC; }
 .ai-status {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 0.76rem;
-    color: var(--muted);
-    background: #F8FAFC;
-    border: 1px solid #EAECF0;
-    border-radius: 10px;
-    padding: 8px 10px;
     margin: 6px 0 10px 0;
-}
-.ai-status.done { color: var(--green); background: var(--green-soft); border-color: #ABEFC6; }
-.ai-status.fallback { color: var(--orange); background: var(--orange-soft); border-color: #FED7AA; }
-.pulse {
-    width: 7px; height: 7px; border-radius: 50%; background: var(--teal);
-    box-shadow: 0 0 0 0 rgba(14,124,123,0.5); animation: pulse 1.5s infinite;
-}
-@keyframes pulse {
-    0% { box-shadow: 0 0 0 0 rgba(14,124,123,0.45); }
-    70% { box-shadow: 0 0 0 8px rgba(14,124,123,0); }
-    100% { box-shadow: 0 0 0 0 rgba(14,124,123,0); }
-}
-.ai-footnote {
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #F8FAFC;
     color: var(--muted);
     font-size: 0.69rem;
-    border-top: 1px dashed var(--line);
-    padding-top: 8px;
+}
+.ai-status.done {
+    color: #047857;
+    border-color: #A7F3D0;
+    background: var(--emerald-soft);
+}
+.ai-status.fallback {
+    color: #B45309;
+    border-color: #FDE68A;
+    background: var(--amber-soft);
+}
+.pulse {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--emerald);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.45);
+    animation: pulse 1.6s infinite;
+}
+@keyframes pulse {
+    0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.38); }
+    70% { box-shadow: 0 0 0 7px rgba(16, 185, 129, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+}
+.ai-footnote {
     margin-top: 9px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--line);
+    color: var(--muted);
+    font-size: 0.65rem;
     line-height: 1.5;
 }
 
-/* Right rail */
+/* Streamlit tabs */
+div[data-testid="stTabs"] [data-baseweb="tab-list"] {
+    gap: 6px;
+    border-bottom: 1px solid var(--line);
+}
+div[data-testid="stTabs"] button[data-baseweb="tab"] {
+    height: auto;
+    padding: 9px 12px;
+    border: 1px solid transparent;
+    border-radius: 8px 8px 0 0;
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 700;
+    background: transparent;
+}
+div[data-testid="stTabs"] button[data-baseweb="tab"]:hover {
+    color: var(--navy);
+    background: #F8FAFC;
+}
+div[data-testid="stTabs"] button[data-baseweb="tab"][aria-selected="true"] {
+    color: var(--navy);
+    border-color: var(--line);
+    border-bottom-color: var(--surface);
+    background: var(--surface);
+    box-shadow: inset 0 2px 0 var(--emerald);
+}
+div[data-testid="stTabs"] [data-baseweb="tab-highlight"] {
+    display: none;
+}
+
+/* -------------------------------------------------------------------------
+   Right rail: rule evidence and PDF credential
+   ------------------------------------------------------------------------- */
 .rule-card {
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 18px;
-    padding: 16px 16px 13px 16px;
-    box-shadow: 0 10px 24px rgba(16, 42, 67, 0.05);
     margin-top: 12px;
+    padding: 16px 16px 13px 16px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: var(--surface);
+    box-shadow: var(--shadow-card);
 }
 .rule-title {
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    justify-content: space-between;
+    margin-bottom: 9px;
     color: var(--navy);
-    font-size: 0.88rem;
+    font-size: 0.82rem;
     font-weight: 800;
-    margin-bottom: 10px;
 }
 .rule-title span {
-    color: var(--green);
-    background: var(--green-soft);
-    font-size: 0.58rem;
-    letter-spacing: 0.10em;
-    border-radius: 6px;
     padding: 3px 6px;
+    border-radius: 4px;
+    color: #047857;
+    background: var(--emerald-soft);
+    font-size: 0.52rem;
+    letter-spacing: 0.08em;
 }
 .rule-row {
     display: flex;
     justify-content: space-between;
-    gap: 12px;
+    gap: 10px;
     padding: 7px 0;
-    border-bottom: 1px solid #F0ECE4;
-    font-size: 0.72rem;
+    border-bottom: 1px solid var(--line-soft);
     color: var(--muted);
+    font-size: 0.68rem;
+    line-height: 1.45;
 }
 .rule-row:last-child { border-bottom: 0; }
-.rule-row b { color: var(--ink); text-align: right; font-weight: 700; }
+.rule-row b {
+    color: var(--ink);
+    text-align: right;
+    font-weight: 650;
+}
 .rule-note {
     margin-top: 8px;
     padding: 8px 9px;
-    border-radius: 9px;
-    background: var(--teal-soft);
-    color: #0B5252;
-    font-size: 0.67rem;
-    line-height: 1.45;
+    border: 1px solid #D1FAE5;
+    border-radius: 7px;
+    background: var(--emerald-soft);
+    color: #065F46;
+    font-size: 0.63rem;
+    line-height: 1.5;
 }
 .pdf-card {
-    background: linear-gradient(145deg, #0F2E4D 0%, #102A43 60%, #163B57 100%);
-    border-radius: 18px;
-    padding: 18px 17px 14px 17px;
-    color: white;
-    box-shadow: 0 18px 35px rgba(16, 42, 67, 0.20);
-    margin-bottom: 4px;
+    padding: 18px 17px 13px 17px;
+    border: 1px solid #1E293B;
+    border-radius: 14px;
+    background:
+        radial-gradient(circle at 100% 0%, rgba(16, 185, 129, 0.15), transparent 14rem),
+        linear-gradient(145deg, #0F172A 0%, #111C31 58%, #0B1220 100%);
+    box-shadow: 0 18px 30px -14px rgba(15, 23, 42, 0.38);
+    color: #FFFFFF;
 }
 .pdf-kicker {
-    color: #8FD3CF;
-    font-size: 0.62rem;
+    margin-bottom: 5px;
+    color: #6EE7B7;
+    font-size: 0.56rem;
     font-weight: 800;
     letter-spacing: 0.13em;
     text-transform: uppercase;
-    margin-bottom: 5px;
 }
-.pdf-title { font-size: 1.08rem; font-weight: 800; margin-bottom: 5px; }
-.pdf-desc { color: #C9D6E2; font-size: 0.70rem; line-height: 1.5; margin-bottom: 3px; }
+.pdf-title {
+    margin-bottom: 5px;
+    color: #FFFFFF;
+    font-size: 1.03rem;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+}
+.pdf-desc {
+    margin-bottom: 3px;
+    color: #94A3B8;
+    font-size: 0.66rem;
+    line-height: 1.55;
+}
 .pdf-wait {
-    background: rgba(255,255,255,0.08);
-    border: 1px dashed rgba(255,255,255,0.28);
-    border-radius: 10px;
-    padding: 12px;
-    color: #D9E2EC;
-    font-size: 0.70rem;
-    line-height: 1.5;
     margin-top: 8px;
+    padding: 11px;
+    border: 1px dashed rgba(255, 255, 255, 0.24);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.05);
+    color: #CBD5E1;
+    font-size: 0.66rem;
+    line-height: 1.5;
 }
 
-/* Streamlit buttons */
-div[data-testid="stSidebar"] div.stButton > button {
-    border-radius: 12px;
+/* -------------------------------------------------------------------------
+   Buttons
+   ------------------------------------------------------------------------- */
+section[data-testid="stSidebar"] div.stButton > button {
     min-height: 44px;
-    font-weight: 800;
-    letter-spacing: 0.02em;
-    background: #0E7C7B !important;
+    border: 1px solid #1E293B !important;
+    border-radius: 9px;
+    background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%) !important;
     color: #FFFFFF !important;
-    border: 1px solid #0E7C7B !important;
+    font-weight: 700;
+    letter-spacing: 0.01em;
+    box-shadow: 0 8px 16px -10px rgba(15, 23, 42, 0.5);
+    transition: all 0.2s ease;
 }
-div[data-testid="stSidebar"] div.stButton > button:hover {
-    background: #0B5F5E !important;
-    border-color: #0B5F5E !important;
-    color: #FFFFFF !important;
+section[data-testid="stSidebar"] div.stButton > button:hover {
+    border-color: #334155 !important;
+    background: linear-gradient(135deg, #111C31 0%, #273449 100%) !important;
+    transform: translateY(-1px);
 }
 section[data-testid="stSidebar"] button[kind="primary"] p,
 section[data-testid="stSidebar"] button[data-testid="stBaseButton-primary"] p {
     color: #FFFFFF !important;
-    font-weight: 800 !important;
+    font-weight: 700 !important;
+}
+div.stDownloadButton > button {
+    width: 100%;
+    min-height: 58px;
+    border: 0;
+    border-radius: 9px;
+    background: linear-gradient(90deg, #0284C7 0%, #0369A1 100%);
+    color: #FFFFFF;
+    font-size: 0.82rem;
+    font-weight: 800;
+    letter-spacing: 0.01em;
+    box-shadow: 0 10px 20px -12px rgba(2, 132, 199, 0.7);
+    transition: all 0.2s ease;
+}
+div.stDownloadButton > button:hover {
+    background: linear-gradient(90deg, #0EA5E9 0%, #0284C7 100%);
+    color: #FFFFFF;
+    transform: translateY(-1px);
 }
 div.stDownloadButton button p {
     color: #FFFFFF !important;
     font-weight: 800 !important;
 }
-div.stDownloadButton > button {
-    width: 100%;
-    min-height: 64px;
-    border: 0;
-    border-radius: 13px;
-    background: linear-gradient(90deg, #F97316 0%, #EA580C 100%);
-    color: white;
-    font-size: 0.96rem;
-    font-weight: 800;
-    letter-spacing: 0.01em;
-    box-shadow: 0 9px 18px rgba(234, 88, 12, 0.28);
-}
-div.stDownloadButton > button:hover {
-    background: linear-gradient(90deg, #FB923C 0%, #F97316 100%);
-    color: white;
-    border: 0;
-}
 
-/* Sidebar */
+/* -------------------------------------------------------------------------
+   Sidebar
+   ------------------------------------------------------------------------- */
 section[data-testid="stSidebar"] {
-    background: linear-gradient(180deg, #FBF9F4 0%, #F3F0E8 100%);
-    border-right: 1px solid #E5DED1;
+    border-right: 1px solid var(--line);
+    background: #FFFFFF;
 }
-section[data-testid="stSidebar"] .block-container { padding-top: 1.2rem; }
+section[data-testid="stSidebar"] .block-container {
+    padding-top: 1.15rem;
+}
 .side-brand {
-    font-size: 0.95rem;
-    font-weight: 900;
-    letter-spacing: 0.10em;
+    margin-bottom: 3px;
     color: var(--navy);
-    margin-bottom: 2px;
+    font-size: 0.92rem;
+    font-weight: 900;
+    letter-spacing: 0.12em;
 }
-.side-brand span { color: var(--teal); }
+.side-brand span { color: var(--emerald-deep); }
 .side-sub {
+    margin-bottom: 18px;
     color: var(--muted);
-    font-size: 0.70rem;
-    line-height: 1.45;
-    margin-bottom: 16px;
+    font-size: 0.66rem;
+    line-height: 1.55;
 }
 .side-label {
-    color: var(--muted);
-    font-size: 0.62rem;
+    margin: 14px 0 6px 0;
+    color: #94A3B8;
+    font-size: 0.57rem;
     font-weight: 800;
-    letter-spacing: 0.13em;
+    letter-spacing: 0.14em;
     text-transform: uppercase;
-    margin: 13px 0 5px 0;
 }
-.side-card {
-    background: rgba(255,255,255,0.72);
-    border: 1px solid #E7E1D5;
-    border-radius: 13px;
-    padding: 11px 12px;
-    margin: 4px 0 8px 0;
+.side-note {
+    margin-top: 14px;
+    padding-top: 11px;
+    border-top: 1px solid var(--line);
+    color: #94A3B8;
+    font-size: 0.61rem;
+    line-height: 1.6;
 }
-.side-row {
+.engine-line {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 5px 0;
-    font-size: 0.70rem;
-    color: #52606D;
-    border-bottom: 1px dashed #E7E1D5;
+    gap: 7px;
+    overflow: hidden;
+    margin: 5px 0 10px 0;
+    padding: 9px 10px;
+    border: 1px solid #D1FAE5;
+    border-radius: 8px;
+    background: #F0FDF4;
+    color: #065F46;
+    font-size: 0.66rem;
+    font-weight: 600;
+    white-space: nowrap;
+    text-overflow: ellipsis;
 }
-.side-row:last-child { border-bottom: 0; }
-.side-row b { color: var(--navy); font-size: 0.66rem; text-align: right; }
-.status-pill {
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    font-size: 0.60rem;
+.engine-line b {
+    color: #047857;
     font-weight: 800;
-    letter-spacing: 0.05em;
-    padding: 3px 7px;
-    border-radius: 999px;
 }
-.status-pill.ok { color: var(--green); background: var(--green-soft); }
-.status-pill.warn { color: var(--orange); background: var(--orange-soft); }
-.side-note {
-    color: var(--muted);
-    font-size: 0.64rem;
-    line-height: 1.55;
-    border-top: 1px solid #E5DED1;
-    padding-top: 10px;
-    margin-top: 12px;
+.engine-line .engine-state {
+    color: #059669;
+    font-weight: 500;
+}
+.engine-dot {
+    flex: 0 0 auto;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--emerald);
+    box-shadow: 0 0 8px rgba(16, 185, 129, 0.7);
+}
+.engine-line.offline {
+    border-color: #FDE68A;
+    background: #FFFBEB;
+    color: #92400E;
+}
+.engine-line.offline b { color: #92400E; }
+.engine-line.offline .engine-state { color: #B45309; }
+.engine-line.offline .engine-dot {
+    background: var(--amber);
+    box-shadow: none;
 }
 
-/* Empty / onboarding */
+/* File uploader — clean white dashed surface */
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
+    min-height: 74px;
+    padding: 12px;
+    border: 1px dashed #CBD5E1;
+    border-radius: 10px;
+    background: #FFFFFF;
+    transition: border-color 0.2s ease, background 0.2s ease;
+}
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"]:hover {
+    border-color: var(--emerald);
+    background: #F8FAFC;
+}
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button {
+    border: 1px solid var(--line) !important;
+    border-radius: 7px !important;
+    background: #F8FAFC !important;
+    color: var(--navy) !important;
+    font-size: 0.68rem !important;
+}
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] button p {
+    color: var(--navy) !important;
+    font-weight: 600 !important;
+}
+section[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] small {
+    color: #94A3B8 !important;
+    font-size: 0.59rem !important;
+}
+
+/* -------------------------------------------------------------------------
+   Empty / onboarding
+   ------------------------------------------------------------------------- */
 .empty-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 12px;
-    margin: 12px 0 18px 0;
+    margin: 10px 0 16px 0;
 }
 .empty-card {
-    background: rgba(255,255,255,0.80);
-    border: 1px solid var(--line);
-    border-radius: 15px;
+    min-height: 126px;
     padding: 16px;
-    min-height: 120px;
-    box-shadow: 0 8px 20px rgba(16, 42, 67, 0.04);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: var(--surface);
+    box-shadow: var(--shadow-card);
+    transition: all 0.2s ease;
+}
+.empty-card:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-hover);
 }
 .empty-num {
-    color: var(--teal);
-    font-size: 0.70rem;
-    font-weight: 900;
+    margin-bottom: 8px;
+    color: var(--emerald-deep);
+    font-size: 0.58rem;
+    font-weight: 800;
     letter-spacing: 0.12em;
-    margin-bottom: 7px;
 }
-.empty-card h4 { color: var(--navy); font-size: 0.92rem; margin: 0 0 5px 0; }
-.empty-card p { color: var(--muted); font-size: 0.74rem; line-height: 1.55; margin: 0; }
+.empty-card h4 {
+    margin: 0 0 5px 0;
+    color: var(--navy);
+    font-size: 0.84rem;
+    font-weight: 750;
+}
+.empty-card p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.69rem;
+    line-height: 1.6;
+}
 .source-panel {
-    background: rgba(255,255,255,0.75);
-    border: 1px solid var(--line);
-    border-radius: 16px;
-    padding: 14px 16px;
     margin-top: 8px;
+    padding: 14px 16px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: var(--surface);
+    box-shadow: var(--shadow-card);
 }
-.source-panel .small { color: var(--muted); font-size: 0.70rem; line-height: 1.55; }
+.source-panel .small {
+    color: var(--muted);
+    font-size: 0.69rem;
+    line-height: 1.55;
+}
 
-/* Markdown refinements inside the app */
+/* -------------------------------------------------------------------------
+   Markdown typography
+   ------------------------------------------------------------------------- */
 [data-testid="stMarkdownContainer"] h2 {
-    color: var(--teal);
-    font-size: 1.08rem;
     margin-top: 1.15rem;
-    margin-bottom: 0.35rem;
-    letter-spacing: -0.01em;
+    margin-bottom: 0.4rem;
+    color: var(--navy);
+    font-size: 1.02rem;
+    font-weight: 800;
+    letter-spacing: -0.015em;
 }
 [data-testid="stMarkdownContainer"] h3 {
-    color: var(--navy);
-    font-size: 1rem;
     margin-top: 0.9rem;
+    color: var(--navy);
+    font-size: 0.94rem;
+    font-weight: 750;
 }
 [data-testid="stMarkdownContainer"] p,
 [data-testid="stMarkdownContainer"] li {
-    color: #344054;
-    font-size: 0.90rem;
-    line-height: 1.72;
+    color: #334155;
+    font-size: 0.86rem;
+    line-height: 1.75;
 }
-[data-testid="stMarkdownContainer"] strong { color: var(--navy); }
+[data-testid="stMarkdownContainer"] li {
+    margin-bottom: 0.3rem;
+}
+[data-testid="stMarkdownContainer"] ul,
+[data-testid="stMarkdownContainer"] ol {
+    margin: 8px 0 10px 0;
+    padding-left: 18px;
+    border-left: 2px solid var(--navy);
+}
+[data-testid="stMarkdownContainer"] strong {
+    color: var(--navy);
+    font-weight: 700;
+}
+[data-testid="stMarkdownContainer"] blockquote {
+    margin: 12px 0;
+    padding: 11px 14px;
+    border-left: 4px solid var(--navy);
+    border-radius: 0 7px 7px 0;
+    background: #F8FAFC;
+    color: #334155;
+}
+[data-testid="stMarkdownContainer"] blockquote p {
+    margin: 0;
+    color: #334155;
+    font-size: 0.82rem;
+}
 [data-testid="stMarkdownContainer"] code {
-    background: #F2F4F7;
-    color: #0B5252;
-    border-radius: 5px;
+    padding: 2px 5px;
+    border-radius: 4px;
+    background: #F1F5F9;
+    color: #0369A1;
+    font-size: 0.8rem;
 }
 [data-testid="stExpander"] {
     border: 1px solid var(--line);
-    border-radius: 14px;
-    background: rgba(255,255,255,0.6);
+    border-radius: 10px;
+    background: #FFFFFF;
 }
-div[data-testid="stCaptionContainer"] { color: var(--muted); }
+[data-testid="stExpander"] summary {
+    font-size: 0.71rem;
+    color: var(--ink);
+}
+div[data-testid="stCaptionContainer"] {
+    color: var(--muted);
+}
+section[data-testid="stSidebar"] div[data-testid="stTextInput"] input {
+    border-color: var(--line);
+    background: #FFFFFF;
+    font-size: 0.7rem;
+}
 
+/* -------------------------------------------------------------------------
+   Responsive
+   ------------------------------------------------------------------------- */
+@media (max-width: 1100px) {
+    .console-main {
+        grid-template-columns: 1fr;
+        gap: 16px;
+    }
+    .console-pills {
+        justify-content: flex-start;
+    }
+}
 @media (max-width: 900px) {
-    .hero { padding: 21px 20px; border-radius: 18px; }
-    .hero h1 { font-size: 2rem; }
-    .empty-grid { grid-template-columns: 1fr; }
-    .risk-banner { flex-direction: column; align-items: flex-start; }
-    .risk-detail { text-align: left; }
-    .well-block { border-right: 0; padding: 5px 0; width: 45%; }
-    .well-strip { padding: 14px 16px; }
+    .block-container {
+        padding-left: 1rem;
+        padding-right: 1rem;
+    }
+    .console-header {
+        padding: 18px 17px;
+        border-radius: 14px;
+    }
+    .console-top {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 7px;
+        margin-bottom: 15px;
+    }
+    .console-title-block h1 {
+        font-size: 1.9rem;
+    }
+    .empty-grid {
+        grid-template-columns: 1fr;
+    }
+    .risk-banner {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 8px;
+    }
+    .risk-detail {
+        text-align: left;
+    }
+    .pill {
+        max-width: 100%;
+    }
 }
 </style>
 """
@@ -1731,36 +2046,48 @@ def inject_css() -> None:
     st.markdown(CSS, unsafe_allow_html=True)
 
 
-def render_topbar() -> None:
-    st.markdown(
-        """
-        <div class="topbar">
-            <div class="brand">VERITECHS <span>GROUP</span> <span style="color:#98A2B3;font-weight:600;">/ ZIWIGPT</span></div>
-            <div class="topbar-right">Wellsite decision intelligence · POC</div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+def render_console_header(source_name: str, result: Optional[Dict[str, Any]] = None,
+                          selected: str = "", uploaded: bool = False) -> None:
+    """Dark industrial command header with compact well-context pills."""
+    if result:
+        well = str(result.get("well", "n/a"))
+        depth = f"{result.get('measured_depth_m', 0):,.0f} m MD"
+        formation = str(result.get("formation", "n/a"))
+        window = f"{result.get('baseline_time', 'n/a')} → {result.get('current_time', 'n/a')}"
+    else:
+        case = CASES.get(selected, {})
+        if uploaded:
+            well = "Uploaded DDR"
+            depth = "Pending"
+            formation = "Awaiting diagnostic"
+        else:
+            well = str(case.get("well", "n/a"))
+            depth = f"{case.get('depth', 0):,.0f} m MD" if case.get("depth") else "Pending"
+            formation = str(case.get("formation", "Awaiting diagnostic"))
+        window = "Ready to run"
 
+    formation_short = formation.split("(")[0].strip() if "(" in formation else formation
 
-def render_hero(source_name: str = "") -> None:
-    source_chip = (
-        f'<span class="chip">DATA · {html.escape(source_name)}</span>'
-        if source_name else '<span class="chip">DATA · WAITING</span>'
-    )
     st.markdown(
         f"""
-        <div class="hero">
-            <div class="eyebrow">WELLSITE DECISION INTELLIGENCE / ZIWIGPT</div>
-            <h1>井场工程日报 · 工况预警决策台</h1>
-            <p>规则引擎锁定每一个工程数值，DeepSeek 负责解释因果链与一线处置，
-            最后一键交付面向海外业主的 A4 决策简报。为高风险工况而设计，也为“网络不可用”的那一天而设计。</p>
-            <div class="chips">
-                <span class="chip">RULE ENGINE · LOCKED</span>
-                <span class="chip live">DEEPSEEK · LIVE + FALLBACK</span>
-                <span class="chip">SPP / ROP / HYDRAULICS</span>
-                {source_chip}
-                <span class="chip">A4 PDF · READY</span>
+        <div class="console-header">
+            <div class="console-top">
+                <div class="console-brand">VERITECHS <span>GROUP</span><span class="slash">/</span>ZIWIGPT</div>
+                <div class="console-secure"><span class="dot"></span> RULE ENGINE LOCKED · DEEPSEEK-FLASH</div>
+            </div>
+            <div class="console-main">
+                <div class="console-title-block">
+                    <div class="console-eyebrow">WELLSITE DIGITAL CONTROL ROOM</div>
+                    <h1>井场工况数字驾驶舱</h1>
+                    <p>Rule engine locked. AI explained. Decision ready.</p>
+                </div>
+                <div class="console-pills">
+                    <div class="pill"><span>WELL</span><b>{html.escape(well)}</b></div>
+                    <div class="pill"><span>DEPTH</span><b>{html.escape(depth)}</b></div>
+                    <div class="pill"><span>FORMATION</span><b>{html.escape(formation_short)}</b></div>
+                    <div class="pill"><span>WINDOW</span><b>{html.escape(window)}</b></div>
+                    <div class="pill accent"><span>SOURCE</span><b>{html.escape(source_name)}</b></div>
+                </div>
             </div>
         </div>
         """,
@@ -1772,12 +2099,12 @@ def render_sidebar() -> Tuple[str, Any, bool]:
     with st.sidebar:
         st.markdown(
             '<div class="side-brand">ZIWI<span>GPT</span></div>'
-            '<div class="side-sub">Wellsite condition warning & decision brief<br/>'
+            '<div class="side-sub">Industrial wellsite intelligence<br/>'
             'Vertechs Group · Solutions Engineer POC</div>',
             unsafe_allow_html=True,
         )
 
-        st.markdown('<div class="side-label">01 / Test case</div>', unsafe_allow_html=True)
+        st.markdown('<div class="side-label">01 / Case</div>', unsafe_allow_html=True)
         selected = st.selectbox(
             "选择测试案例",
             options=list(CASES.keys()),
@@ -1791,16 +2118,16 @@ def render_sidebar() -> Tuple[str, Any, bool]:
             else "SPP +1.3% · ROP −3.2% · 未触发阈值"
         )
         uploaded = st.file_uploader(
-            "或上传新的 .txt 工程日报",
+            "上传 .txt 工程日报",
             type=["txt"],
             help="上传文件会覆盖下拉案例；格式需包含 [WELL]、[BASELINE]、[CURRENT] 段。",
         )
         if uploaded is not None:
             st.caption(f"上传覆盖：`{uploaded.name}`")
 
-        st.markdown('<div class="side-label">02 / AI engine</div>', unsafe_allow_html=True)
+        st.markdown('<div class="side-label">02 / Engine</div>', unsafe_allow_html=True)
         cloud_key = get_cloud_api_key()
-        with st.expander("临时 API Key（可选）", expanded=not bool(cloud_key)):
+        with st.expander("API connection", expanded=not bool(cloud_key)):
             st.text_input(
                 "DeepSeek API Key",
                 type="password",
@@ -1811,43 +2138,29 @@ def render_sidebar() -> Tuple[str, Any, bool]:
                     "此处输入仅保存在当前浏览器会话，不写入磁盘。"
                 ),
             )
-            st.caption("优先级：云端 Secrets → 界面 Key → 环境变量 → 离线专家兜底。")
+            st.caption("Cloud Secrets → session key → environment → offline expert.")
             if cloud_key:
-                st.caption("检测到云端 Secrets，已忽略界面临时 Key。")
+                st.caption("Cloud secret detected; session key ignored.")
 
         api_key, key_source = resolve_api_key()
-        key_class = "ok" if api_key else "warn"
-        key_text = "KEY READY" if api_key else "NO KEY · FALLBACK"
-        source_label = {
-            "cloud": "CLOUD SECRET",
-            "ui": "UI SESSION",
-            "env": "ENV VAR",
-            "none": "NONE",
-        }.get(key_source, "NONE")
-        actual_hint = (
-            "deepseek-flash (active)"
-            if st.session_state.get("model_fallback")
-            else "deepseek-flash (if needed)"
-        )
+        if api_key:
+            engine_class = "connected"
+            engine_state = "Connected"
+        else:
+            engine_class = "offline"
+            engine_state = "Offline expert"
         st.markdown(
-            f"""
-            <div class="side-card">
-                <div class="side-row"><span>DeepSeek API</span>
-                    <span class="status-pill {key_class}">{key_text}</span></div>
-                <div class="side-row"><span>Key source</span><b>{source_label}</b></div>
-                <div class="side-row"><span>Requested model</span><b>{html.escape(DEEPSEEK_REQUESTED_MODEL)}</b></div>
-                <div class="side-row"><span>Fallback</span><b>{html.escape(actual_hint)}</b></div>
-                <div class="side-row"><span>Timeout</span><b>{AI_MAX_SECONDS}s total</b></div>
-            </div>
-            """,
+            f'<div class="engine-line {engine_class}">'
+            '<span class="engine-dot"></span>'
+            f'Engine: <b>{html.escape(DEEPSEEK_MODEL)}</b> '
+            f'<span class="engine-state">({engine_state})</span>'
+            '</div>',
             unsafe_allow_html=True,
         )
         if not api_key:
-            st.warning("未检测到云端 Secrets 或界面 Key，将使用内置专家兜底。演示不会中断。")
+            st.caption("No key detected — offline report will be used.")
         elif key_source == "ui":
-            st.caption("当前使用界面临时 Key，仅保存在本次会话。")
-        elif st.session_state.get("model_fallback"):
-            st.info("指定模型不被官方 API 支持，当前已自动使用 `deepseek-flash`。")
+            st.caption("Session key active; not written to disk.")
 
         st.markdown('<div class="side-label">03 / Run</div>', unsafe_allow_html=True)
         run_clicked = st.button(
@@ -1856,42 +2169,12 @@ def render_sidebar() -> Tuple[str, Any, bool]:
             use_container_width=True,
         )
         st.markdown(
-            '<div class="side-note">规则引擎：<b>check_hydraulics.py</b><br/>'
-            'AI 不重算指标；网络异常自动切换离线专家稿。<br/>'
-            'POC 合成数据，不替代现场工程师决策。</div>',
+            '<div class="side-note">Rule engine: <b>check_hydraulics.py</b><br/>'
+            'AI does not recalculate values.<br/>'
+            'POC synthetic data · human-in-the-loop required.</div>',
             unsafe_allow_html=True,
         )
     return selected, uploaded, run_clicked
-
-
-def render_well_strip(result: Dict[str, Any], source_name: str) -> None:
-    st.markdown(
-        f"""
-        <div class="well-strip">
-            <div class="well-block">
-                <div class="well-label">Active well</div>
-                <div class="well-value">{html.escape(str(result.get('well', 'n/a')))}</div>
-            </div>
-            <div class="well-block">
-                <div class="well-label">Measured depth</div>
-                <div class="well-value">{result.get('measured_depth_m', 0):,.0f} m MD</div>
-            </div>
-            <div class="well-block">
-                <div class="well-label">Formation</div>
-                <div class="well-value">{html.escape(str(result.get('formation', 'n/a')))}</div>
-            </div>
-            <div class="well-block">
-                <div class="well-label">Window</div>
-                <div class="well-value">{result.get('baseline_time', 'n/a')} → {result.get('current_time', 'n/a')}</div>
-            </div>
-            <div class="well-block">
-                <div class="well-label">Source</div>
-                <div class="well-value">{html.escape(source_name)}</div>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
 
 
 def render_risk_banner(result: Dict[str, Any]) -> None:
@@ -1932,7 +2215,7 @@ def _metric_card(label: str, code: str, value: str, unit: str,
     <div class="metric-card {tone}">
         <div class="metric-top"><span>{html.escape(label)}</span><span class="metric-code">{html.escape(code)}</span></div>
         <div class="metric-value">{html.escape(value)}<span class="unit">{html.escape(unit)}</span></div>
-        <div class="metric-delta">{html.escape(delta)}</div>
+        <div class="metric-delta"><span class="metric-pill {tone}">{html.escape(delta)}</span></div>
         <div class="metric-sub">{html.escape(sub)}</div>
     </div>
     """
@@ -2010,10 +2293,10 @@ def render_pdf_placeholder() -> None:
     st.markdown(
         """
         <div class="pdf-card">
-            <div class="pdf-kicker">Decision deliverable</div>
-            <div class="pdf-title">A4 · 专业决策 PDF</div>
-            <div class="pdf-desc">含风险红框、指标对比、AI 归因、SOP 与英文执行摘要。</div>
-            <div class="pdf-wait">AI 诊断完成后自动解锁下载按钮。</div>
+            <div class="pdf-kicker">Certified deliverable</div>
+            <div class="pdf-title">A4 双语决策签批报告</div>
+            <div class="pdf-desc">风险红框、指标对比、AI 归因、SOP 与 English Executive Summary。</div>
+            <div class="pdf-wait">AI 诊断完成后自动解锁签批版 PDF。</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -2023,12 +2306,12 @@ def render_pdf_placeholder() -> None:
 def render_pdf_card(pdf_bytes: Optional[bytes], pdf_name: str,
                     ai_meta: Dict[str, Any]) -> None:
     mode = ai_meta.get("mode", "fallback")
-    mode_label = "LIVE AI" if mode == "live" else "OFFLINE FALLBACK"
+    mode_label = "LIVE AI" if mode == "live" else "OFFLINE EXPERT"
     st.markdown(
         f"""
         <div class="pdf-card">
-            <div class="pdf-kicker">Decision deliverable / {mode_label}</div>
-            <div class="pdf-title">A4 · 专业决策简报</div>
+            <div class="pdf-kicker">Certified deliverable / {mode_label}</div>
+            <div class="pdf-title">A4 双语决策签批报告</div>
             <div class="pdf-desc">风险红框 · 指标卡 · 机理归因 · 一线 SOP · English Executive Summary。</div>
         </div>
         """,
@@ -2036,27 +2319,27 @@ def render_pdf_card(pdf_bytes: Optional[bytes], pdf_name: str,
     )
     if pdf_bytes:
         st.download_button(
-            "📥 一键下载专业决策 PDF 报告",
+            "📥 导出 A4 双语决策签批报告 (PDF)",
             data=pdf_bytes,
             file_name=pdf_name or "ZIWIGPT_Decision_Brief.pdf",
             mime="application/pdf",
             use_container_width=True,
             type="primary",
         )
-        st.caption("A4 · 风险红框 · 可直接用于业主汇报 / 面试演示")
+        st.caption("A4 · 双语 · 风险红框 · 可直接用于业主汇报 / 面试演示")
     else:
-        st.button("📥 一键下载专业决策 PDF 报告", disabled=True,
+        st.button("📥 导出 A4 双语决策签批报告 (PDF)", disabled=True,
                   use_container_width=True)
 
 
 def render_ai_footer(meta: Dict[str, Any]) -> None:
     mode = meta.get("mode", "fallback")
     actual = meta.get("actual_model") or "n/a"
-    note = meta.get("notice") or meta.get("error") or ""
+    note = meta.get("error") or ""
     if mode == "live":
         st.caption(f"DeepSeek live · actual model: `{actual}` · 规则数值未经过模型重算")
     else:
-        st.caption("Offline expert fallback · 内置高保真专家稿 · 演示不中断")
+        st.caption("Offline expert report · 内置高保真专家稿 · 演示不中断")
     if note:
         st.caption(note)
 
@@ -2067,6 +2350,53 @@ def _ai_header_html(badge: str) -> str:
         '<span class="spark">✦</span> AI 工程解释</div>'
         f"{badge}</div>"
     )
+
+
+def split_ai_sections(ai_text: str) -> Tuple[str, str]:
+    """Split the model narrative into Chinese SOP and English summary."""
+    text = (ai_text or "").strip()
+    if not text:
+        return "", ""
+
+    match = re.search(
+        r"(?im)^#{0,4}\s*(?:三|3)\s*[、.\-]?\s*English Executive Summary\s*$",
+        text,
+    )
+    if match:
+        chinese = text[:match.start()].strip()
+        english = text[match.end():].strip()
+    else:
+        marker = "english executive summary"
+        index = text.lower().find(marker)
+        if index >= 0:
+            chinese = text[:index].strip()
+            english = text[index + len(marker):].strip()
+        else:
+            chinese = text
+            english = ""
+
+    chinese = re.sub(r"\n\s*[-—]{3,}\s*$", "", chinese).strip()
+    english = re.sub(r"^\s*[-—]{3,}\s*\n?", "", english).strip()
+    return chinese, english
+
+
+def render_ai_tabs(ai_text: str) -> None:
+    """Render the two-language diagnosis in a modern tabbed surface."""
+    chinese, english = split_ai_sections(ai_text)
+    tab_cn, tab_en = st.tabs([
+        "🇨🇳 一线工程归因与 SOP 处置指引",
+        "🌐 Executive Summary (跨国业主会签标准)",
+    ])
+    with tab_cn:
+        if chinese:
+            st.markdown(chinese)
+        else:
+            st.info("本次未返回中文诊断内容。")
+    with tab_en:
+        if english:
+            st.markdown(english)
+        else:
+            st.info("本次未返回英文执行摘要；可重新运行诊断生成双语内容。")
 
 
 def render_ai_panel(result: Dict[str, Any], log_text: str) -> Tuple[str, Dict[str, Any]]:
@@ -2081,14 +2411,14 @@ def render_ai_panel(result: Dict[str, Any], log_text: str) -> Tuple[str, Dict[st
         badge = (
             '<span class="ai-badge live">LIVE · DEEPSEEK</span>'
             if mode == "live"
-            else '<span class="ai-badge fallback">FALLBACK · EXPERT</span>'
+            else '<span class="ai-badge fallback">OFFLINE · EXPERT</span>'
         )
     else:
         badge = '<span class="ai-badge ready">READY TO RUN</span>'
 
     st.markdown(
-        '<div class="section-kicker">02 / AI diagnosis</div>'
-        '<div class="section-title">DeepSeek 深度诊断与处置建议</div>',
+        '<div class="section-kicker">02 / Diagnosis</div>'
+        '<div class="section-title">双语工程诊断与处置建议</div>',
         unsafe_allow_html=True,
     )
     with st.container(border=True):
@@ -2102,7 +2432,7 @@ def render_ai_panel(result: Dict[str, Any], log_text: str) -> Tuple[str, Dict[st
         if not needs_ai:
             ai_text = st.session_state.get("ai_text", "")
             if ai_text:
-                st.markdown(ai_text)
+                render_ai_tabs(ai_text)
                 render_ai_footer(meta)
                 return ai_text, meta
             st.info("点击左侧「运行诊断」后，AI 报告将在此处实时生成。")
@@ -2116,7 +2446,7 @@ def render_ai_panel(result: Dict[str, Any], log_text: str) -> Tuple[str, Dict[st
             ai_text = build_fallback_report(result, "未配置 DEEPSEEK_API_KEY")
             meta = {
                 "mode": "fallback",
-                "requested_model": DEEPSEEK_REQUESTED_MODEL,
+                "model": DEEPSEEK_MODEL,
                 "actual_model": "internal-expert-fallback",
                 "error": "未配置 API Key，已使用内置专家兜底。",
             }
@@ -2125,7 +2455,7 @@ def render_ai_panel(result: Dict[str, Any], log_text: str) -> Tuple[str, Dict[st
             st.session_state["needs_ai"] = False
             header_slot.markdown(
                 _ai_header_html(
-                    '<span class="ai-badge fallback">FALLBACK · EXPERT</span>'
+                    '<span class="ai-badge fallback">OFFLINE · EXPERT</span>'
                 ),
                 unsafe_allow_html=True,
             )
@@ -2133,7 +2463,9 @@ def render_ai_panel(result: Dict[str, Any], log_text: str) -> Tuple[str, Dict[st
                 '<div class="ai-status fallback">● 未检测到 API Key，已切换内置专家兜底</div>',
                 unsafe_allow_html=True,
             )
-            body_slot.markdown(ai_text)
+            body_slot.empty()
+            with body_slot.container():
+                render_ai_tabs(ai_text)
             render_ai_footer(meta)
             return ai_text, meta
 
@@ -2141,38 +2473,30 @@ def render_ai_panel(result: Dict[str, Any], log_text: str) -> Tuple[str, Dict[st
         st.session_state["ai_meta"] = {}
         status_slot.markdown(
             '<div class="ai-status"><span class="pulse"></span>'
-            'DeepSeek 正在读取日报、建立证据链并推理…</div>',
+            'DeepSeek 正在读取日报并生成诊断…</div>',
             unsafe_allow_html=True,
         )
 
         buffer: List[str] = []
         reasoning_chars = 0
-        actual_model = DEEPSEEK_REQUESTED_MODEL
-        notice = ""
+        actual_model = DEEPSEEK_MODEL
         error_text = ""
         live_ok = False
         last_render = 0.0
 
         try:
-            for event in iter_deepseek(
-                log_text,
-                result,
-                api_key,
-                prefer_fallback=bool(st.session_state.get("model_fallback")),
-            ):
+            for event in iter_deepseek(log_text, result, api_key):
                 event_type = event.get("type")
                 if event_type == "reasoning":
                     reasoning_chars += int(event.get("chars", 0))
                     if reasoning_chars and reasoning_chars % 80 < 20:
                         status_slot.markdown(
                             '<div class="ai-status"><span class="pulse"></span>'
-                            f'DeepSeek 正在推理…（已处理 {reasoning_chars} 字思考）</div>',
+                            f'DeepSeek 正在生成…（已处理 {reasoning_chars} 字）</div>',
                             unsafe_allow_html=True,
                         )
                 elif event_type == "model":
                     actual_model = event.get("model") or actual_model
-                elif event_type == "notice":
-                    notice = event.get("message", "")
                 elif event_type == "content":
                     buffer.append(event.get("text", ""))
                     now = time.monotonic()
@@ -2190,24 +2514,14 @@ def render_ai_panel(result: Dict[str, Any], log_text: str) -> Tuple[str, Dict[st
                 f"DeepSeek 调用失败（{type(exc).__name__}），已切换内置专家兜底。"
             )
             ai_text = build_fallback_report(result, error_text)
-            notice = ""
 
         if live_ok:
             meta = {
                 "mode": "live",
-                "requested_model": DEEPSEEK_REQUESTED_MODEL,
+                "model": DEEPSEEK_MODEL,
                 "actual_model": actual_model,
-                "notice": notice,
                 "error": "",
             }
-            if actual_model != DEEPSEEK_REQUESTED_MODEL:
-                st.session_state["model_fallback"] = True
-                done_note = (
-                    f"DeepSeek 生成完成 · 实际模型 {actual_model} "
-                    "（指定模型不可用，已自动切换）"
-                )
-            else:
-                done_note = "DeepSeek 生成完成 · 数值已由规则引擎锁定"
             header_slot.markdown(
                 _ai_header_html(
                     '<span class="ai-badge live">LIVE · DEEPSEEK</span>'
@@ -2215,29 +2529,32 @@ def render_ai_panel(result: Dict[str, Any], log_text: str) -> Tuple[str, Dict[st
                 unsafe_allow_html=True,
             )
             status_slot.markdown(
-                f'<div class="ai-status done">● {html.escape(done_note)}</div>',
+                '<div class="ai-status done">● DeepSeek 生成完成 · 数值已由规则引擎锁定</div>',
                 unsafe_allow_html=True,
             )
-            body_slot.markdown(ai_text)
+            body_slot.empty()
+            with body_slot.container():
+                render_ai_tabs(ai_text)
         else:
             meta = {
                 "mode": "fallback",
-                "requested_model": DEEPSEEK_REQUESTED_MODEL,
+                "model": DEEPSEEK_MODEL,
                 "actual_model": "internal-expert-fallback",
-                "notice": "",
                 "error": error_text,
             }
             header_slot.markdown(
                 _ai_header_html(
-                    '<span class="ai-badge fallback">FALLBACK · EXPERT</span>'
+                    '<span class="ai-badge fallback">OFFLINE · EXPERT</span>'
                 ),
                 unsafe_allow_html=True,
             )
             status_slot.markdown(
-                '<div class="ai-status fallback">● 网络 / 模型不可用，已无缝切换离线专家兜底</div>',
+                '<div class="ai-status fallback">● 网络或模型请求失败，已启用离线专家稿</div>',
                 unsafe_allow_html=True,
             )
-            body_slot.markdown(ai_text)
+            body_slot.empty()
+            with body_slot.container():
+                render_ai_tabs(ai_text)
 
         st.session_state["ai_text"] = ai_text
         st.session_state["ai_meta"] = meta
@@ -2275,7 +2592,7 @@ def render_empty_state(log_text: str, source_name: str) -> None:
         f"""
         <div class="source-panel">
             <div class="section-kicker" style="margin-top:0;">Current data source</div>
-            <div style="font-weight:800;color:#102A43;margin:2px 0 4px 0;">{html.escape(source_name)}</div>
+            <div style="font-weight:800;color:#0F172A;margin:2px 0 4px 0;">{html.escape(source_name)}</div>
             <div class="small">当前仅加载数据，尚未执行规则计算。点击左侧「运行诊断 →」启动完整链路。</div>
         </div>
         """,
@@ -2286,7 +2603,6 @@ def render_empty_state(log_text: str, source_name: str) -> None:
 
 
 def render_workspace(result: Dict[str, Any], log_text: str, source_name: str) -> None:
-    render_well_strip(result, source_name)
     render_risk_banner(result)
     render_metrics(result)
 
@@ -2313,7 +2629,7 @@ def render_workspace(result: Dict[str, Any], log_text: str, source_name: str) ->
 
 def main() -> None:
     st.set_page_config(
-        page_title="ZIWIGPT | 井场工况预警决策台",
+        page_title="ZIWIGPT | 井场工况数字驾驶舱",
         page_icon="🛢️",
         layout="wide",
         initial_sidebar_state="expanded",
@@ -2347,9 +2663,6 @@ def main() -> None:
         st.session_state["log_text"] = log_text
         reset_result_state()
 
-    render_topbar()
-    render_hero(source_name)
-
     if run_clicked:
         try:
             with st.spinner("规则引擎正在计算 SPP / ROP / 水力负荷…"):
@@ -2375,6 +2688,12 @@ def main() -> None:
         st.session_state["pdf_signature"] = ""
 
     result = st.session_state.get("analysis")
+    render_console_header(
+        source_name,
+        result,
+        selected=selected,
+        uploaded=uploaded is not None,
+    )
     if not result:
         render_empty_state(log_text, source_name)
         return
