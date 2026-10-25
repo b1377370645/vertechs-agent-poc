@@ -1,0 +1,72 @@
+================================================================================
+ 井场工程日报 / DAILY DRILLING REPORT
+ POC SYNTHETIC DATA — 沙特 Khuff 硬夹层案例，仅用于演示
+================================================================================
+Document No. : DDR-GHW08-20261025-001
+Report Time  : 2026-10-25 09:25 CST
+Data Type    : Synthetic POC / 合成数据
+Encoding     : UTF-8
+
+[WELL]
+Well: Saudi-Ghawar-08
+Field: Ghawar Field, Saudi Arabia (POC)
+Measured Depth: 5100 m
+Formation: Khuff Carbonate Formation
+Lithology: 致密灰岩与白云岩互层，局部燧石结核，研磨性强
+Hole Size: 215.9 mm
+Bit: 215.9 mm PDC，6 刀翼，16 mm 切削齿
+BHA: PDC + 1.2° 螺杆 + MWD + 8 in 钻铤 + 5 in 钻杆
+Mud Type: 油基钻井液
+Mud Density: 1.52 g/cm3
+Mud Funnel Viscosity: 56 s
+PV: 24 mPa·s
+YP: 13 Pa
+pH: 9.4
+API Filtrate: 2.2 mL
+Pump: 3NB-1600 泥浆泵 × 1，160 mm 缸套
+SPP Continuous Limit: 32.0 MPa
+Data Type: Synthetic POC
+
+[BASELINE]
+Time: 09:00
+Operation: Drilling / 正常钻进
+RPM: 100 rpm
+WOB: 140 kN
+SPP: 23.0 MPa
+ROP: 6.5 m/h
+FLOW: 26 L/s
+TORQUE: 19.0 kNm
+HOOKLOAD: 1960 kN
+FLOW OUT: 25.8 L/s
+PIT VOLUME: 188.4 m3
+GAS TOTAL: 0.4 %
+MUD TEMP: 79 C
+
+[CURRENT]
+Time: 09:20
+Operation: Drilling / 钻速受阻
+RPM: 100 rpm
+WOB: 140 kN
+SPP: 23.2 MPa
+ROP: 2.8 m/h
+FLOW: 26 L/s
+TORQUE: 19.5 kNm
+HOOKLOAD: 1962 kN
+FLOW OUT: 25.8 L/s
+PIT VOLUME: 188.4 m3
+GAS TOTAL: 0.4 %
+MUD TEMP: 80 C
+
+[EVENT LOG]
+09:00:00  正常钻进。SPP 23.0 MPa，ROP 6.5 m/h，扭矩 19.0 kNm，循环与返出稳定。
+09:08:00  进入 Khuff 致密碳酸盐岩过渡段，ROP 逐步下降至 4.6 m/h，SPP 基本稳定。
+09:14:00  ROP 3.2 m/h，SPP 23.1 MPa，扭矩 19.3 kNm，出口流量与池体积无异常。
+09:20:00  ROP 2.8 m/h，较基线下降 56.9%；SPP 23.2 MPa（+0.8%），扭矩 19.5 kNm。
+09:22:00  停钻检查钻头与参数，循环压力平稳，未见环空憋堵或漏失显示。
+
+[OBSERVATIONS]
+1. ROP 由 6.5 m/h 降至 2.8 m/h（-56.9%），超过 50% 预警阈值。
+2. SPP 由 23.0 MPa 微升至 23.2 MPa（+0.8%），排量与泵冲保持稳定，循环压力平稳。
+3. 扭矩由 19.0 升至 19.5 kNm（+2.6%），出口流量 25.8 L/s、总池体积 188.4 m³ 均稳定。
+4. 进入 Khuff 致密碳酸盐岩过渡段，岩性变硬、研磨性增强，疑似钻头齿磨损或硬夹层。
+5. 当前首要判断：单纯地层变硬/钻头磨损，排除环空憋堵与井漏；建议检查钻头磨损并优化参数。
