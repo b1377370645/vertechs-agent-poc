@@ -1289,10 +1289,6 @@ html, body, [class*="css"] {
 header[data-testid="stHeader"] {
     background: transparent;
 }
-div[data-testid="stToolbar"] {
-    visibility: hidden;
-    height: 0;
-}
 div[data-testid="stDecoration"] {
     display: none;
 }
@@ -2238,7 +2234,7 @@ header[data-testid="stHeader"] {
 .block-container {
     background: transparent !important;
 }
-#MainMenu, footer, div[data-testid="stToolbar"],
+#MainMenu, footer,
 div[data-testid="stDecoration"] {
     visibility: hidden !important;
     height: 0 !important;
@@ -2989,6 +2985,45 @@ div[data-testid="stTabs"] [data-testid="stMarkdownContainer"] li {
 .risk-pill.yellow {
     background: #F59E0B !important;
     color: #0F172A !important;
+}
+/* Sidebar expand control must survive header cleanup */
+button[data-testid="stExpandSidebarButton"],
+button[data-testid="collapsedControl"],
+button[data-testid="stSidebarCollapsedControl"],
+[data-testid="collapsedControl"] button,
+[data-testid="stSidebarCollapsedControl"] button {
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    position: fixed !important;
+    top: 12px !important;
+    left: 12px !important;
+    z-index: 999999 !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 38px !important;
+    height: 34px !important;
+    padding: 0 !important;
+    background-color: #0F172A !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    border-radius: 6px !important;
+    color: #F1F5F9 !important;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35) !important;
+}
+button[data-testid="stExpandSidebarButton"] span,
+button[data-testid="collapsedControl"] span,
+button[data-testid="stSidebarCollapsedControl"] span,
+[data-testid="collapsedControl"] button span,
+[data-testid="stSidebarCollapsedControl"] button span {
+    color: #F1F5F9 !important;
+}
+button[data-testid="stExpandSidebarButton"]:hover,
+button[data-testid="collapsedControl"]:hover,
+button[data-testid="stSidebarCollapsedControl"]:hover,
+[data-testid="collapsedControl"] button:hover,
+[data-testid="stSidebarCollapsedControl"] button:hover {
+    border-color: #F59E0B !important;
+    box-shadow: 0 0 10px rgba(245, 158, 11, 0.30) !important;
 }
 </style>
 """
